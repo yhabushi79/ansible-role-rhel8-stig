@@ -63,6 +63,7 @@ sshd_idle_timeout_value: '600'
 var_rekey_limit_size: 1G
 var_rekey_limit_time: 1h
 var_sssd_certificate_verification_digest_function: sha1
+var_audit_backlog_limit: '8192'
 var_auditd_disk_error_action: syslog|single|halt
 var_auditd_disk_full_action: syslog|single|halt
 var_auditd_action_mail_acct: root
