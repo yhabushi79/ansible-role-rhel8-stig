@@ -1,0 +1,60 @@
+# playbooks/security_scan.yml
+---
+- name: Run Security Checks on VM
+  hosts: all
+  become: yes
+  tasks:
+    - name: Check for available security updates
+      ansible.builtin.package:
+        list: updates
+        security: yes
+      register: security_updates
+
+    - name: Check open ports
+      ansible.builtin.shell: ss -tulnp
+      register: open_ports
+
+    - name: Check for failed SSH login attempts
+      ansible.builtin.shell: "journalctl _SYSTEMD_UNIT=sshd.service --no-pager | grep 'Failed' | tail -20"
+      register: failed_logins
+      ignore_errors: yes
+
+    - name: Check firewall status
+      ansible.builtin.shell: "firewall-cmd --state 2>/dev/null || ufw status 2>/dev/null || echo 'No firewall detected'"
+      register: firewall_status
+
+    - name: Check running services
+      ansible.builtin.shell: systemctl list-units --type=service --state=running --no-pager
+      register: running_services
+
+    - name: Check for world-writable files
+      ansible.builtin.shell: "find / -xdev -type f -perm -0002 -print 2>/dev/null | head -50"
+      register: world_writable
+
+    - name: Check password policy
+      ansible.builtin.shell: "cat /etc/login.defs | grep -E 'PASS_MAX_DAYS|PASS_MIN_DAYS|PASS_MIN_LEN'"
+      register: password_policy
+
+    - name: Generate security report
+      ansible.builtin.debug:
+        msg: |
+          === SECURITY SCAN REPORT ===
+          Host: {{ inventory_hostname }}
+          
+          --- Security Updates Available ---
+          {{ security_updates.results | default('N/A') }}
+          
+          --- Open Ports ---
+          {{ open_ports.stdout }}
+          
+          --- Failed SSH Logins (last 20) ---
+          {{ failed_logins.stdout | default('None found') }}
+          
+          --- Firewall Status ---
+          {{ firewall_status.stdout }}
+          
+          --- World-Writable Files ---
+          {{ world_writable.stdout | default('None found') }}
+          
+          --- Password Policy ---
+          {{ password_policy.stdout }}
