@@ -1,241 +1,161 @@
 ---
-# rhel8-security-scan.yml
-# Comprehensive security and health check for RHEL8 VMs
-# Compatible with: RHEL 8.x, CentOS 8.x
-- name: RHEL8 Security & Health Status Check
+- name: RHEL8 Security and Health Status Check
   hosts: all
-  become: yes
-  gather_facts: yes
-  ignore_errors: yes
+  become: true
+  gather_facts: true
 
   tasks:
-    # ── SECURITY UPDATES ─────────────────────────────────────────────────
-    - name: Check for available security updates (yum)
-      ansible.builtin.shell: >
-        yum updateinfo list security --available 2>/dev/null | tail -30 || echo "No security updates or updateinfo not available"
+    - name: Check security updates
+      ansible.builtin.shell: "yum updateinfo list security --available 2>/dev/null | tail -30 || echo 'No security updates info available'"
       register: security_updates
       changed_when: false
+      ignore_errors: true
 
-    - name: Count available security updates
-      ansible.builtin.shell: >
-        yum updateinfo list security --available 2>/dev/null | grep -c '/' || echo "0"
+    - name: Count security updates
+      ansible.builtin.shell: "yum updateinfo list security --available 2>/dev/null | grep -c '/' || echo '0'"
       register: security_update_count
       changed_when: false
+      ignore_errors: true
 
-    - name: Count all available updates
-      ansible.builtin.shell: >
-        yum check-update --quiet 2>/dev/null | wc -l || echo "0"
+    - name: Count all updates
+      ansible.builtin.shell: "yum check-update --quiet 2>/dev/null | wc -l || echo '0'"
       register: all_update_count
       changed_when: false
+      ignore_errors: true
 
-    # ── NETWORK / OPEN PORTS ─────────────────────────────────────────────
     - name: Check listening ports
-      ansible.builtin.shell: ss -tulnp
+      ansible.builtin.shell: "ss -tulnp"
       register: open_ports
       changed_when: false
+      ignore_errors: true
 
-    - name: Check established connections
-      ansible.builtin.shell: ss -tnp state established | head -30
-      register: established_conns
-      changed_when: false
-
-    # ── FIREWALL ─────────────────────────────────────────────────────────
     - name: Check firewalld status
-      ansible.builtin.shell: >
-        systemctl is-active firewalld 2>/dev/null && firewall-cmd --list-all 2>/dev/null || echo "firewalld is not running"
+      ansible.builtin.shell: "systemctl is-active firewalld 2>/dev/null && firewall-cmd --list-all 2>/dev/null || echo 'firewalld is not running'"
       register: firewall_status
       changed_when: false
+      ignore_errors: true
 
-    # ── SELINUX ──────────────────────────────────────────────────────────
     - name: Check SELinux status
-      ansible.builtin.shell: >
-        getenforce 2>/dev/null && sestatus 2>/dev/null || echo "SELinux not available"
+      ansible.builtin.shell: "getenforce 2>/dev/null && sestatus 2>/dev/null || echo 'SELinux not available'"
       register: selinux_status
       changed_when: false
+      ignore_errors: true
 
-    - name: Check SELinux denials (last 24h)
-      ansible.builtin.shell: >
-        ausearch -m avc -ts today 2>/dev/null | head -20 || echo "No SELinux denials found or auditd not running"
-      register: selinux_denials
-      changed_when: false
-
-    # ── SSH SECURITY ─────────────────────────────────────────────────────
-    - name: Check failed SSH login attempts (last 50)
-      ansible.builtin.shell: >
-        journalctl _SYSTEMD_UNIT=sshd.service --no-pager --since "7 days ago" 2>/dev/null
-        | grep -i 'failed\|invalid' | tail -50 || echo "No failed SSH logins found"
+    - name: Check failed SSH logins
+      ansible.builtin.shell: "journalctl _SYSTEMD_UNIT=sshd.service --no-pager --since '7 days ago' 2>/dev/null | grep -i 'failed' | tail -20 || echo 'No failed SSH logins found'"
       register: failed_logins
       changed_when: false
+      ignore_errors: true
 
-    - name: Check SSH configuration security
-      ansible.builtin.shell: |
-        echo "--- SSH Config Check ---"
-        grep -E '^(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|PermitEmptyPasswords|X11Forwarding|MaxAuthTries|Protocol)' /etc/ssh/sshd_config 2>/dev/null || echo "Could not read sshd_config"
+    - name: Check SSH config
+      ansible.builtin.shell: "grep -E '^(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|PermitEmptyPasswords|MaxAuthTries)' /etc/ssh/sshd_config 2>/dev/null || echo 'Could not read sshd_config'"
       register: ssh_config
       changed_when: false
+      ignore_errors: true
 
-    # ── USER ACCOUNTS ────────────────────────────────────────────────────
-    - name: Check users with UID 0 (root-level)
-      ansible.builtin.shell: >
-        awk -F: '$3 == 0 {print $1}' /etc/passwd
+    - name: Check users with UID 0
+      ansible.builtin.shell: "awk -F: '$3 == 0 {print $1}' /etc/passwd"
       register: uid_zero_users
       changed_when: false
-
-    - name: Check for users with empty passwords
-      ansible.builtin.shell: >
-        awk -F: '($2 == "" || $2 == "!") {print $1}' /etc/shadow 2>/dev/null || echo "Cannot read shadow file"
-      register: empty_passwords
-      changed_when: false
+      ignore_errors: true
 
     - name: Check password policy
-      ansible.builtin.shell: >
-        grep -E '^(PASS_MAX_DAYS|PASS_MIN_DAYS|PASS_MIN_LEN|PASS_WARN_AGE)' /etc/login.defs
+      ansible.builtin.shell: "grep -E '^(PASS_MAX_DAYS|PASS_MIN_DAYS|PASS_MIN_LEN|PASS_WARN_AGE)' /etc/login.defs"
       register: password_policy
       changed_when: false
+      ignore_errors: true
 
-    - name: Check last logins
-      ansible.builtin.shell: last -n 15 --time-format short
-      register: last_logins
-      changed_when: false
-
-    # ── FILESYSTEM ───────────────────────────────────────────────────────
     - name: Check disk usage
-      ansible.builtin.shell: df -hT | grep -vE 'tmpfs|devtmpfs'
+      ansible.builtin.shell: "df -hT | grep -vE 'tmpfs|devtmpfs'"
       register: disk_usage
       changed_when: false
+      ignore_errors: true
 
-    - name: Check for filesystems over 80 percent usage
-      ansible.builtin.shell: >
-        df -hP | awk '+$5 >= 80 {print $0}' | grep -v 'Use%' || echo "No filesystems over 80%"
+    - name: Check disk warnings
+      ansible.builtin.shell: "df -hP | awk '+$5 >= 80 {print $0}' | grep -v 'Use' || echo 'No filesystems over 80 percent'"
       register: disk_warnings
       changed_when: false
+      ignore_errors: true
 
-    - name: Check world-writable files
-      ansible.builtin.shell: >
-        find / -xdev -type f -perm -0002 -not -path '/proc/*' -not -path '/sys/*' 2>/dev/null | head -30 || echo "None found"
-      register: world_writable
-      changed_when: false
-
-    - name: Check SUID SGID files
-      ansible.builtin.shell: >
-        find / -xdev \( -perm -4000 -o -perm -2000 \) -type f 2>/dev/null | head -30
-      register: suid_files
-      changed_when: false
-
-    # ── SERVICES ─────────────────────────────────────────────────────────
-    - name: Check critical services
-      ansible.builtin.shell: |
-        echo "--- Service Status ---"
-        for svc in sshd firewalld auditd rsyslog chronyd crond; do
-          status=$(systemctl is-active $svc 2>/dev/null || echo "not found")
-          printf "  %-15s %s\n" "$svc:" "$status"
-        done
-      register: critical_services
-      changed_when: false
-
-    - name: Check failed systemd units
-      ansible.builtin.shell: >
-        systemctl --failed --no-pager --no-legend 2>/dev/null || echo "No failed units"
-      register: failed_units
-      changed_when: false
-
-    # ── AUDIT ────────────────────────────────────────────────────────────
-    - name: Check auditd status
-      ansible.builtin.shell: >
-        systemctl is-active auditd 2>/dev/null && auditctl -s 2>/dev/null || echo "auditd is not running"
-      register: audit_status
-      changed_when: false
-
-    # ── MEMORY ───────────────────────────────────────────────────────────
     - name: Check memory usage
-      ansible.builtin.shell: free -h
+      ansible.builtin.shell: "free -h"
       register: memory_usage
       changed_when: false
+      ignore_errors: true
 
-    # ── GENERATE REPORT ──────────────────────────────────────────────────
-    - name: Generate Security Report
+    - name: Check critical services
+      ansible.builtin.shell: "for svc in sshd firewalld auditd rsyslog chronyd crond; do status=$(systemctl is-active $svc 2>/dev/null || echo 'not found'); printf '  %-15s %s\\n' \"$svc:\" \"$status\"; done"
+      register: critical_services
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check failed systemd units
+      ansible.builtin.shell: "systemctl --failed --no-pager --no-legend 2>/dev/null || echo 'No failed units'"
+      register: failed_units
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check world-writable files
+      ansible.builtin.shell: "find / -xdev -type f -perm -0002 2>/dev/null | head -20 || echo 'None found'"
+      register: world_writable
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check last logins
+      ansible.builtin.shell: "last -n 10"
+      register: last_logins
+      changed_when: false
+      ignore_errors: true
+
+    - name: Print Security Report
       ansible.builtin.debug:
-        msg: |
-          ================================================================
-                    RHEL8 SECURITY & HEALTH STATUS REPORT
-          ================================================================
-
-          Host: {{ ansible_fqdn | default(inventory_hostname) }}
-          Date: {{ ansible_date_time.iso8601 | default('unknown') }}
-          OS: {{ ansible_distribution | default('unknown') }} {{ ansible_distribution_version | default('') }}
-          Kernel: {{ ansible_kernel | default('unknown') }}
-          Uptime: {{ (ansible_uptime_seconds | default(0) | int) // 86400 }} days
-
-          ----------------------------------------------------------------
-           SECURITY UPDATES
-          ----------------------------------------------------------------
-          Security updates available: {{ security_update_count.stdout | default('unknown') | trim }}
-          Total updates available: {{ all_update_count.stdout | default('unknown') | trim }}
-          {{ security_updates.stdout | default('Could not check updates') }}
-
-          ----------------------------------------------------------------
-           CRITICAL SERVICES
-          ----------------------------------------------------------------
-          {{ critical_services.stdout | default('Could not check services') }}
-
-          Failed units: {{ failed_units.stdout | default('Could not check') }}
-
-          ----------------------------------------------------------------
-           FIREWALL & SELINUX
-          ----------------------------------------------------------------
-          SELinux: {{ (selinux_status.stdout_lines | default(['unknown']))[0] }}
-          Firewall:
-          {{ firewall_status.stdout | default('Could not check firewall') }}
-
-          ----------------------------------------------------------------
-           NETWORK - LISTENING PORTS
-          ----------------------------------------------------------------
-          {{ open_ports.stdout | default('Could not check ports') }}
-
-          ----------------------------------------------------------------
-           SSH SECURITY
-          ----------------------------------------------------------------
-          {{ ssh_config.stdout | default('Could not check SSH config') }}
-
-          Failed login attempts (last 7 days):
-          {{ failed_logins.stdout | default('Could not check logins') }}
-
-          ----------------------------------------------------------------
-           USER ACCOUNTS
-          ----------------------------------------------------------------
-          Users with UID 0: {{ uid_zero_users.stdout | default('unknown') }}
-          Users with empty passwords: {{ empty_passwords.stdout | default('unknown') }}
-
-          Password Policy:
-          {{ password_policy.stdout | default('Could not check policy') }}
-
-          Recent logins:
-          {{ last_logins.stdout | default('Could not check logins') }}
-
-          ----------------------------------------------------------------
-           DISK & FILESYSTEM
-          ----------------------------------------------------------------
-          {{ disk_usage.stdout | default('Could not check disk') }}
-
-          Warnings (>80% full): {{ disk_warnings.stdout | default('unknown') }}
-          World-writable files: {{ world_writable.stdout | default('unknown') }}
-
-          ----------------------------------------------------------------
-           MEMORY
-          ----------------------------------------------------------------
-          {{ memory_usage.stdout | default('Could not check memory') }}
-
-          ----------------------------------------------------------------
-           AUDIT
-          ----------------------------------------------------------------
-          {{ audit_status.stdout | default('Could not check audit') }}
-          SELinux denials today: {{ selinux_denials.stdout | default('unknown') }}
-
-          ----------------------------------------------------------------
-           SUID/SGID FILES
-          ----------------------------------------------------------------
-          {{ suid_files.stdout | default('None found') }}
-
-          ================================================================
-          END OF REPORT
-          ================================================================
+        msg:
+          - "================================================================"
+          - "         RHEL8 SECURITY AND HEALTH STATUS REPORT"
+          - "================================================================"
+          - ""
+          - "Host: {{ ansible_fqdn | default(inventory_hostname) }}"
+          - "OS: {{ ansible_distribution | default('unknown') }} {{ ansible_distribution_version | default('') }}"
+          - "Kernel: {{ ansible_kernel | default('unknown') }}"
+          - "Uptime: {{ (ansible_uptime_seconds | default(0) | int) // 86400 }} days"
+          - ""
+          - "--- SECURITY UPDATES ---"
+          - "Security updates: {{ security_update_count.stdout | default('unknown') }}"
+          - "Total updates: {{ all_update_count.stdout | default('unknown') }}"
+          - "{{ security_updates.stdout | default('Could not check') }}"
+          - ""
+          - "--- CRITICAL SERVICES ---"
+          - "{{ critical_services.stdout | default('Could not check') }}"
+          - "Failed units: {{ failed_units.stdout | default('none') }}"
+          - ""
+          - "--- FIREWALL ---"
+          - "{{ firewall_status.stdout | default('Could not check') }}"
+          - ""
+          - "--- SELINUX ---"
+          - "{{ selinux_status.stdout | default('Could not check') }}"
+          - ""
+          - "--- LISTENING PORTS ---"
+          - "{{ open_ports.stdout | default('Could not check') }}"
+          - ""
+          - "--- SSH SECURITY ---"
+          - "{{ ssh_config.stdout | default('Could not check') }}"
+          - "Failed logins (7 days): {{ failed_logins.stdout | default('Could not check') }}"
+          - ""
+          - "--- USER ACCOUNTS ---"
+          - "UID 0 users: {{ uid_zero_users.stdout | default('unknown') }}"
+          - "Password policy: {{ password_policy.stdout | default('unknown') }}"
+          - "Recent logins: {{ last_logins.stdout | default('unknown') }}"
+          - ""
+          - "--- DISK ---"
+          - "{{ disk_usage.stdout | default('Could not check') }}"
+          - "Warnings (>80%): {{ disk_warnings.stdout | default('unknown') }}"
+          - ""
+          - "--- MEMORY ---"
+          - "{{ memory_usage.stdout | default('Could not check') }}"
+          - ""
+          - "--- FILESYSTEM RISKS ---"
+          - "World-writable files: {{ world_writable.stdout | default('unknown') }}"
+          - ""
+          - "================================================================"
+          - "                      END OF REPORT"
+          - "================================================================"
