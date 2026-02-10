@@ -1,0 +1,190 @@
+---
+# Dynamic Host Security Scan
+# Launch with extra vars:
+#   target_host: <hostname or IP>
+#   target_user: <ssh username>
+#   target_password: <ssh password>
+
+# Play 1: Build dynamic inventory from extra vars (runs on localhost)
+- name: Setup dynamic target host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Validate target_host is provided
+      ansible.builtin.assert:
+        that:
+          - target_host is defined
+          - target_host | length > 0
+        fail_msg: "You must provide 'target_host' as an extra variable"
+
+    - name: Add target host to inventory
+      ansible.builtin.add_host:
+        name: "{{ target_host }}"
+        groups: dynamic_targets
+        ansible_user: "{{ target_user | default('lab-user') }}"
+        ansible_password: "{{ target_password | default(omit) }}"
+        ansible_become_password: "{{ target_become_password | default(target_password | default(omit)) }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+
+# Play 2: Run the security scan on the dynamic host
+- name: RHEL8 Security and Health Status Check
+  hosts: dynamic_targets
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Check security updates
+      ansible.builtin.shell: "yum updateinfo list security --available 2>/dev/null | tail -30 || echo 'No security updates info available'"
+      register: security_updates
+      changed_when: false
+      ignore_errors: true
+
+    - name: Count security updates
+      ansible.builtin.shell: "yum updateinfo list security --available 2>/dev/null | grep -c '/' || echo '0'"
+      register: security_update_count
+      changed_when: false
+      ignore_errors: true
+
+    - name: Count all updates
+      ansible.builtin.shell: "yum check-update --quiet 2>/dev/null | wc -l || echo '0'"
+      register: all_update_count
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check listening ports
+      ansible.builtin.shell: "ss -tulnp"
+      register: open_ports
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check firewalld status
+      ansible.builtin.shell: "systemctl is-active firewalld 2>/dev/null && firewall-cmd --list-all 2>/dev/null || echo 'firewalld is not running'"
+      register: firewall_status
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check SELinux status
+      ansible.builtin.shell: "getenforce 2>/dev/null && sestatus 2>/dev/null || echo 'SELinux not available'"
+      register: selinux_status
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check failed SSH logins
+      ansible.builtin.shell: "journalctl _SYSTEMD_UNIT=sshd.service --no-pager --since '7 days ago' 2>/dev/null | grep -i 'failed' | tail -20 || echo 'No failed SSH logins found'"
+      register: failed_logins
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check SSH config
+      ansible.builtin.shell: "grep -E '^(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|PermitEmptyPasswords|MaxAuthTries)' /etc/ssh/sshd_config 2>/dev/null || echo 'Could not read sshd_config'"
+      register: ssh_config
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check users with UID 0
+      ansible.builtin.shell: "awk -F: '$3 == 0 {print $1}' /etc/passwd"
+      register: uid_zero_users
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check password policy
+      ansible.builtin.shell: "grep -E '^(PASS_MAX_DAYS|PASS_MIN_DAYS|PASS_MIN_LEN|PASS_WARN_AGE)' /etc/login.defs"
+      register: password_policy
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check disk usage
+      ansible.builtin.shell: "df -hT | grep -vE 'tmpfs|devtmpfs'"
+      register: disk_usage
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check disk warnings
+      ansible.builtin.shell: "df -hP | awk '+$5 >= 80 {print $0}' | grep -v 'Use' || echo 'No filesystems over 80 percent'"
+      register: disk_warnings
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check memory usage
+      ansible.builtin.shell: "free -h"
+      register: memory_usage
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check critical services
+      ansible.builtin.shell: "for svc in sshd firewalld auditd rsyslog chronyd crond; do status=$(systemctl is-active $svc 2>/dev/null || echo 'not found'); printf '  %-15s %s\\n' \"$svc:\" \"$status\"; done"
+      register: critical_services
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check failed systemd units
+      ansible.builtin.shell: "systemctl --failed --no-pager --no-legend 2>/dev/null || echo 'No failed units'"
+      register: failed_units
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check world-writable files
+      ansible.builtin.shell: "find / -xdev -type f -perm -0002 2>/dev/null | head -20 || echo 'None found'"
+      register: world_writable
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check last logins
+      ansible.builtin.shell: "last -n 10"
+      register: last_logins
+      changed_when: false
+      ignore_errors: true
+
+    - name: Print Security Report
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "         RHEL8 SECURITY AND HEALTH STATUS REPORT"
+          - "================================================================"
+          - ""
+          - "Host: {{ ansible_fqdn | default(inventory_hostname) }}"
+          - "OS: {{ ansible_distribution | default('unknown') }} {{ ansible_distribution_version | default('') }}"
+          - "Kernel: {{ ansible_kernel | default('unknown') }}"
+          - "Uptime: {{ (ansible_uptime_seconds | default(0) | int) // 86400 }} days"
+          - ""
+          - "--- SECURITY UPDATES ---"
+          - "Security updates: {{ security_update_count.stdout | default('unknown') }}"
+          - "Total updates: {{ all_update_count.stdout | default('unknown') }}"
+          - "{{ security_updates.stdout | default('Could not check') }}"
+          - ""
+          - "--- CRITICAL SERVICES ---"
+          - "{{ critical_services.stdout | default('Could not check') }}"
+          - "Failed units: {{ failed_units.stdout | default('none') }}"
+          - ""
+          - "--- FIREWALL ---"
+          - "{{ firewall_status.stdout | default('Could not check') }}"
+          - ""
+          - "--- SELINUX ---"
+          - "{{ selinux_status.stdout | default('Could not check') }}"
+          - ""
+          - "--- LISTENING PORTS ---"
+          - "{{ open_ports.stdout | default('Could not check') }}"
+          - ""
+          - "--- SSH SECURITY ---"
+          - "{{ ssh_config.stdout | default('Could not check') }}"
+          - "Failed logins (7 days): {{ failed_logins.stdout | default('Could not check') }}"
+          - ""
+          - "--- USER ACCOUNTS ---"
+          - "UID 0 users: {{ uid_zero_users.stdout | default('unknown') }}"
+          - "Password policy: {{ password_policy.stdout | default('unknown') }}"
+          - "Recent logins: {{ last_logins.stdout | default('unknown') }}"
+          - ""
+          - "--- DISK ---"
+          - "{{ disk_usage.stdout | default('Could not check') }}"
+          - "Warnings (>80%): {{ disk_warnings.stdout | default('unknown') }}"
+          - ""
+          - "--- MEMORY ---"
+          - "{{ memory_usage.stdout | default('Could not check') }}"
+          - ""
+          - "--- FILESYSTEM RISKS ---"
+          - "World-writable files: {{ world_writable.stdout | default('unknown') }}"
+          - ""
+          - "================================================================"
+          - "                      END OF REPORT"
+          - "================================================================"
